@@ -12,11 +12,9 @@ env:
   DEPLOYMENT_NAME: iris-api-deployment
   SERVICE_NAME: iris-api-service
   
-  # Define parts for the image path.
-  # IMAGE_HOST and IMAGE_REPO_NAME are for the Artifact Registry structure.
   IMAGE_HOST: us-central1-docker.pkg.dev 
-  ARTIFACT_REGISTRY_REPO_NAME: iris-api # This is the name of the repository you created manually
-  APP_IMAGE_NAME: iris-classifier-api # <--- THIS IS THE MISSING PART! This is the actual name of your Docker image artifact.
+  ARTIFACT_REGISTRY_REPO_NAME: iris-api 
+  APP_IMAGE_NAME: iris-classifier-api 
   IMAGE_TAG: latest
 
 jobs:
@@ -33,33 +31,30 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Set up Google Cloud SDK
+      - name: Set up Google Cloud SDK and Install GKE Auth Plugin
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
+          # --- ADD THIS LINE ---
+          install_components: 'gke-gcloud-auth-plugin' # Install the necessary kubectl auth plugin
 
       - name: Authenticate Docker to Artifact Registry
-        # Use the specific Artifact Registry host for authentication
         run: gcloud auth configure-docker ${{ env.IMAGE_HOST }}
 
       - name: Build Docker image
-        # Construct the full image path directly in the run command.
-        # Format: HOST/PROJECT_ID/REPOSITORY_NAME/IMAGE_NAME:TAG
         run: docker build -t ${{ env.IMAGE_HOST }}/${{ env.PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO_NAME }}/${{ env.APP_IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
 
       - name: Push Docker image to Artifact Registry
-        # Construct the full image path directly in the run command
         run: docker push ${{ env.IMAGE_HOST }}/${{ env.PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO_NAME }}/${{ env.APP_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
       - name: Get GKE credentials
+        # This will now correctly install and configure kubectl with the plugin
         run: gcloud container clusters get-credentials ${{ env.GKE_CLUSTER }} --zone ${{ env.GKE_ZONE }}
 
       - name: Deploy to GKE
         run: |
-          # Construct the full image path within the shell script for the 'sed' command
           FULL_IMAGE_PATH="${{ env.IMAGE_HOST }}/${{ env.PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO_NAME }}/${{ env.APP_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
           
-          # Replace the placeholder in deployment.yaml with the full Artifact Registry path
           sed -i "s|gcr.io/\[YOUR_GCP_PROJECT_ID\]/iris-api:latest|${FULL_IMAGE_PATH}|g" kubernetes/deployment.yaml
 
           kubectl apply -f kubernetes/deployment.yaml
