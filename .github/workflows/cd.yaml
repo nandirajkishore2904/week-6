@@ -11,8 +11,14 @@ env:
   GKE_ZONE: us-central1-a
   DEPLOYMENT_NAME: iris-api-deployment
   SERVICE_NAME: iris-api-service
+  
+  # --- IMPORTANT CHANGE HERE ---
+  # Use the Artifact Registry host for the us-central1 multi-region
+  IMAGE_HOST: us-central1-docker.pkg.dev 
+  
   IMAGE_NAME: iris-api
   IMAGE_TAG: latest
+  FULL_IMAGE_PATH: ${{ env.IMAGE_HOST }}/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
 jobs:
   build-and-deploy:
@@ -22,42 +28,41 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # --- NEW AUTHENTICATION STEP ADDED HERE ---
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
-          # This action specifically takes the service account key for authentication
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Set up Google Cloud SDK
-        # This action now just installs the SDK and sets the project ID.
-        # It's no longer responsible for authentication with service_account_key.
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
-          # Removed service_account_key from here as per the warning.
 
-      - name: Authenticate Docker to Google Container Registry
-        # This command will now work because gcloud is already authenticated
-        run: gcloud auth configure-docker gcr.io
+      - name: Authenticate Docker to Artifact Registry
+        # Authenticate with the specific Artifact Registry host
+        run: gcloud auth configure-docker ${{ env.IMAGE_HOST }}
 
       - name: Build Docker image
-        run: docker build -t gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+        # Build using the full Artifact Registry image path
+        run: docker build -t ${{ env.FULL_IMAGE_PATH }} .
 
-      - name: Push Docker image to GCR
-        run: docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+      - name: Push Docker image to Artifact Registry
+        # Push to the pre-created Artifact Registry repository
+        run: docker push ${{ env.FULL_IMAGE_PATH }}
 
       - name: Get GKE credentials
-        # This command will also work now because gcloud is authenticated
         run: gcloud container clusters get-credentials ${{ env.GKE_CLUSTER }} --zone ${{ env.GKE_ZONE }}
 
       - name: Deploy to GKE
         run: |
-          sed -i "s|gcr.io/\[YOUR_GCP_PROJECT_ID\]/iris-api:latest|gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|g" kubernetes/deployment.yaml
+          # The sed command will replace the GCR placeholder with the full Artifact Registry path
+          sed -i "s|gcr.io/\[YOUR_GCP_PROJECT_ID\]/iris-api:latest|${{ env.FULL_IMAGE_PATH }}|g" kubernetes/deployment.yaml
+
           kubectl apply -f kubernetes/deployment.yaml
           kubectl apply -f kubernetes/service.yaml
           echo "Waiting for deployment rollout to complete..."
           kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }}
+
           echo "Service details:"
           kubectl get service ${{ env.SERVICE_NAME }}
